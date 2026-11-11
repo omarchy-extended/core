@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""The omext addons' settings, from a script or a menu entry (omext core).
+
+Usage:
+  omext-settings list                     the settings files there are
+  omext-settings path <name>              where one is ("docks", "start", "layouts/work")
+  omext-settings get <name> [key]         it all, or one key's value (JSON); "null" if unset
+  omext-settings set <name> <key> <json>  one key (true, 3, "text", [..]): `set taskbar gatherOnUnplug true`
+  omext-settings toggle <name> <key>      true <-> false (unset counts as false); prints the new value
+  omext-settings unset <name> <key>
+
+They're in ~/.config/omext/, one JSON file per addon. Exit status of `get
+<name> <key>`: 0 when the value is true, 1 otherwise (for a menu's `checked`).
+"""
+
+import json
+import os
+import sys
+from pathlib import Path
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "omarchy/plugins/omext.core"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "plugins/omext.core"))
+import omext_settings as settings  # noqa: E402
+
+
+def die(msg):
+    sys.exit(f"omext-settings: {msg}")
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    cmd, args = argv[0], argv[1:]
+    if cmd == "list":
+        print("\n".join(settings.names()))
+        return 0
+    if not args:
+        die(f"{cmd}: which settings? (omext-settings list)")
+    name = args[0]
+    if cmd == "path":
+        print(settings.path(name))
+        return 0
+    data = settings.read(name, {})
+    if cmd == "get":
+        if len(args) == 1:
+            print(json.dumps(data, indent=2, ensure_ascii=False))
+            return 0
+        value = data.get(args[1]) if isinstance(data, dict) else None
+        print(json.dumps(value, ensure_ascii=False))
+        return 0 if value is True else 1
+    if not isinstance(data, dict):
+        die(f"{name} doesn't hold keys")
+    if cmd == "set":
+        if len(args) != 3:
+            die("set <name> <key> <json value>")
+        try:
+            value = json.loads(args[2])
+        except ValueError:
+            value = args[2]  # a bare word: text
+        settings.update(name, {args[1]: value})
+        return 0
+    if cmd == "toggle":
+        if len(args) != 2:
+            die("toggle <name> <key>")
+        value = data.get(args[1]) is not True
+        settings.update(name, {args[1]: value})
+        print(json.dumps(value))
+        return 0
+    if cmd == "unset":
+        if len(args) != 2:
+            die("unset <name> <key>")
+        data.pop(args[1], None)
+        settings.write(name, data)
+        return 0
+    die(f"unknown command '{cmd}' (omext-settings --help)")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

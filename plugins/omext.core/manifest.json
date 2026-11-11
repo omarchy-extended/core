@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "omext.core",
+  "name": "Omext Core",
+  "version": "1.0.0",
+  "author": "omarchy-extended",
+  "license": "MIT",
+  "description": "What the omarchy-extended addons share (omext core): which app a window is, going to a window, their settings files.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
