@@ -26,6 +26,36 @@ QtObject {
     '[ -n "$at" ] && hyprctl dispatch "hl.dsp.cursor.move({ x = ${at% *}, y = ${at#* } })" >/dev/null'
   ].join("\n")
 
+  // A floating window back from being minimized is put wholly on its screen:
+  // it keeps the size and place it had, and those may be another screen's (the
+  // big one it was on is unplugged, or it comes back on the laptop's). No
+  // larger than the room the bars leave, and no part of it outside that.
+  readonly property string fitBack: [
+    'import json, subprocess, sys, time',
+    'addr = sys.argv[1]',
+    'def hypr(what): return json.loads(subprocess.run(["hyprctl", what, "-j"], capture_output=True, text=True).stdout or "[]")',
+    'def dsp(text): subprocess.run(["hyprctl", "dispatch", text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)',
+    'for _ in range(20):',
+    '    c = next((c for c in hypr("clients") if c["address"] == addr), None)',
+    '    if c and c["workspace"]["id"] > 0: break',
+    '    time.sleep(0.05)',
+    'else: sys.exit()',
+    'if not c["floating"] or c.get("fullscreen"): sys.exit()',
+    'm = next((m for m in hypr("monitors") if m["id"] == c["monitor"]), None)',
+    'if not m: sys.exit()',
+    'turned = m.get("transform", 0) % 2',
+    'mw, mh = (m["height"], m["width"]) if turned else (m["width"], m["height"])',
+    'r = m.get("reserved", [0, 0, 0, 0])',
+    'gap = 2',
+    'x0, y0 = m["x"] + r[0] + gap, m["y"] + r[1] + gap',
+    'rw, rh = round(mw / m["scale"]) - r[0] - r[2] - 2 * gap, round(mh / m["scale"]) - r[1] - r[3] - 2 * gap',
+    '(x, y), (w, h) = c["at"], c["size"]',
+    'nw, nh = min(w, rw), min(h, rh)',
+    'nx, ny = max(x0, min(x, x0 + rw - nw)), max(y0, min(y, y0 + rh - nh))',
+    'if (nw, nh) != (w, h): dsp("hl.dsp.window.resize({ x = %d, y = %d, relative = false, window = \'address:%s\' })" % (nw, nh, addr))',
+    'if (nx, ny) != (x, y): dsp("hl.dsp.window.move({ x = %d, y = %d, relative = false, window = \'address:%s\' })" % (nx, ny, addr))'
+  ].join("\n")
+
   // Goes to a window: focused, on top. `docked`: {dock, app} when it's in an
   // omext dock (the dock opens on it). A minimized one (Omarchy's) comes back
   // onto the workspace `monitor` shows (the focused one's by default) first:
@@ -42,6 +72,7 @@ QtObject {
       var ws = m && m.activeWorkspace ? m.activeWorkspace.id : -1
       if (!(ws >= 1)) return
       Hyprland.dispatch("hl.dsp.window.move({ workspace = '" + ws + "', " + target + " })")
+      Quickshell.execDetached(["python3", "-c", windows.fitBack, String(c.address)])
     }
     Hyprland.dispatch("hl.dsp.focus({ " + target + " })")
     Hyprland.dispatch("hl.dsp.window.alter_zorder({ mode = 'top', " + target + " })")
