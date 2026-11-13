@@ -16,6 +16,7 @@ it.
 | `Addons.qml` | Which omext addons are installed, and on: asked the same way by every addon that behaves differently beside another. |
 | `omext_settings.py` | The same settings handling for the addons' command-line tools (`omext-dock`, `omext-zone`, `omext-layout`): `settings.read("docks", {})`, `settings.write("docks", data)`. |
 | `hypr/escape.lua` | Escape closes what the omext addons have up over the windows: an open dock, the taskbar and its lists, a menu, the zone map. One Hyprland bind that takes nothing from the app in front; each addon hears it through a global shortcut of its own. |
+| `omext-startup` | What starts at login, in one list: your own entries (`~/.config/autostart`), the system's (`/etc/xdg/autostart`, turned off by a file of your own that hides it) and the [omext docks](https://github.com/omarchy-extended/docks)' apps that start with their dock. `omext-startup list`, `set <id> on\|off`, `add <app>`, `remove <id>`; [omext start](https://github.com/omarchy-extended/start)'s settings show it. What `~/.config/hypr/autostart.lua` starts is not in it. |
 
 ## Every addon's settings, one way
 

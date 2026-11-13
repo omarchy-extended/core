@@ -24,6 +24,8 @@ ln -sfn "$dir/plugins/omext.core" "$target"
 # Its command (omext-settings: the addons' settings, from a script or a menu entry).
 mkdir -p "$HOME/.local/bin"
 ln -sfn "$dir/bin/omext-settings" "$HOME/.local/bin/omext-settings"
+# ... and omext-startup: what starts at login, in one list (omext start's settings show it).
+ln -sfn "$dir/bin/omext-startup" "$HOME/.local/bin/omext-startup"
 
 # Hyprland: Escape closes what the omext addons have up (hypr/escape.lua),
 # loaded at every (re)load.

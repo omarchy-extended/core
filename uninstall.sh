@@ -13,6 +13,7 @@ rec=${XDG_STATE_HOME:-$HOME/.local/state}/omext/core/omarchy-dock-off
 [[ -e $rec ]] && { rm -f "$rec"; omarchy plugin enable omarchy.dock >/dev/null 2>&1; }
 [[ -L $HOME/.config/omarchy/plugins/omext.core ]] && rm "$HOME/.config/omarchy/plugins/omext.core"
 [[ -L $HOME/.local/bin/omext-settings ]] && rm "$HOME/.local/bin/omext-settings"
+[[ -L $HOME/.local/bin/omext-startup ]] && rm "$HOME/.local/bin/omext-startup"
 hypr_conf=$HOME/.config/hypr/hyprland.lua
 [[ -f $hypr_conf ]] && sed -i "/^-- BEGIN omext-core\$/,/^-- END omext-core\$/d" "$hypr_conf" && { hyprctl reload >/dev/null 2>&1 || true; }
 echo "uninstall: done"

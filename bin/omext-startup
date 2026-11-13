@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""What starts when you log in, in one list.
+
+Usage:
+  omext-startup list                 JSON: every entry, with whether it is on
+  omext-startup set <id> on|off      turn one on or off
+  omext-startup add <desktop-id>     have an installed app start at login
+                                     (org.gnome.Nautilus, or with .desktop)
+  omext-startup remove <id>          take out one that was added (the system's
+                                     own can only be turned off)
+
+Three kinds of entry, each named by its id:
+  user:<file>     your own, in ~/.config/autostart
+  system:<file>   the system's, in /etc/xdg/autostart (turned off by a file of
+                  the same name in ~/.config/autostart that hides it)
+  dock:<dock>/<app>  an omext docks app that starts with its dock (start on load)
+
+Entries meant for another desktop only (OnlyShowIn / NotShowIn) are left out:
+they don't start here. What Hyprland's own config starts
+(~/.config/hypr/autostart.lua) is not in the list: that file is yours to edit.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+USER = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "autostart"
+SYSTEM = [Path(d) / "autostart" for d in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":") if d]
+DOCK = Path.home() / ".local/bin/omext-dock"
+DESKTOP = os.environ.get("XDG_CURRENT_DESKTOP", "Hyprland").split(":")
+
+
+def die(msg):
+    print(f"omext-startup: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def read(path):
+    """The [Desktop Entry] keys of a desktop file."""
+    out, inside = {}, False
+    try:
+        for line in path.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                inside = line == "[Desktop Entry]"
+            elif inside and "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                out.setdefault(k.strip(), v.strip())
+    except OSError:
+        pass
+    return out
+
+
+def is_on(e):
+    return e.get("Hidden", "false").lower() != "true" and e.get("X-GNOME-Autostart-enabled", "true").lower() != "false"
+
+
+def here(e):
+    """Whether the entry is for this desktop at all."""
+    only = [x for x in e.get("OnlyShowIn", "").split(";") if x]
+    never = [x for x in e.get("NotShowIn", "").split(";") if x]
+    return (not only or any(d in only for d in DESKTOP)) and not any(d in never for d in DESKTOP)
+
+
+def system_files():
+    out = {}
+    for d in SYSTEM:
+        for f in sorted(d.glob("*.desktop")) if d.is_dir() else []:
+            out.setdefault(f.name, f)
+    return out
+
+
+def entries():
+    out, system = [], system_files()
+    mine = {f.name: f for f in sorted(USER.glob("*.desktop"))} if USER.is_dir() else {}
+    for name, f in mine.items():
+        e = read(f)
+        base = read(system[name]) if name in system else {}
+        shown = {**base, **e}
+        if name in system:
+            if not here(base):
+                continue
+            out.append({"id": "system:" + name, "kind": "system", "name": shown.get("Name", name[:-8]),
+                        "icon": shown.get("Icon", ""), "on": is_on(e), "removable": False})
+        elif here(e):
+            out.append({"id": "user:" + name, "kind": "user", "name": e.get("Name", name[:-8]), "icon": e.get("Icon", ""),
+                        "on": is_on(e), "removable": True})
+    for name, f in system.items():
+        if name in mine:
+            continue
+        e = read(f)
+        if here(e):
+            out.append({"id": "system:" + name, "kind": "system", "name": e.get("Name", name[:-8]), "icon": e.get("Icon", ""),
+                        "on": is_on(e), "removable": False})
+    if DOCK.exists():
+        try:
+            docks = json.loads(subprocess.run([str(DOCK), "list"], capture_output=True, text=True, timeout=10).stdout).get("docks", [])
+        except (ValueError, subprocess.SubprocessError, OSError):
+            docks = []
+        for d in docks:
+            side = "left" if d.get("edge") == "left" else "right"
+            for a in d.get("apps", []):
+                if a.get("separator"):
+                    continue
+                out.append({"id": f"dock:{d['id']}/{a['id']}", "kind": "dock", "name": a.get("name", a["id"]), "icon": a.get("icon", ""),
+                            "on": bool(a.get("startOnLoad")), "removable": False, "where": f"{side.capitalize()} dock"})
+    order = {"user": 0, "dock": 1, "system": 2}
+    out.sort(key=lambda e: (order[e["kind"]], e["name"].lower()))
+    return out
+
+
+def set_key(path, key, value):
+    """Set a key in the file's [Desktop Entry] (added there if it has none)."""
+    lines, out, inside, done = path.read_text(errors="replace").splitlines(), [], False, False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("["):
+            if inside and not done:
+                out.append(f"{key}={value}")
+                done = True
+            inside = s == "[Desktop Entry]"
+        elif inside and re.match(rf"{re.escape(key)}\s*=", s):
+            if not done:
+                out.append(f"{key}={value}")
+                done = True
+            continue
+        out.append(line)
+    if not done:
+        if not any(l.strip() == "[Desktop Entry]" for l in lines):
+            out.append("[Desktop Entry]")
+        out.append(f"{key}={value}")
+    path.write_text("\n".join(out) + "\n")
+
+
+def cmd_set(args):
+    if len(args) < 2 or args[1] not in ("on", "off"):
+        die("set needs an id and on|off")
+    kind, _, rest = args[0].partition(":")
+    on = args[1] == "on"
+    if kind == "dock":
+        dock, _, app = rest.partition("/")
+        subprocess.run([str(DOCK), "start-on-load", dock, app, "on" if on else "off"], check=False)
+        return
+    if kind not in ("user", "system") or "/" in rest or not rest.endswith(".desktop"):
+        die(f"no such entry {args[0]}")
+    USER.mkdir(parents=True, exist_ok=True)
+    mine = USER / rest
+    if not mine.exists():
+        source = system_files().get(rest)
+        if kind != "system" or not source:
+            die(f"no such entry {args[0]}")
+        shutil.copyfile(source, mine)  # the system's, with a copy of your own to turn it off in
+    set_key(mine, "Hidden", "false" if on else "true")
+    if on and read(mine).get("X-GNOME-Autostart-enabled", "true").lower() == "false":
+        set_key(mine, "X-GNOME-Autostart-enabled", "true")
+
+
+def cmd_add(args):
+    if not args:
+        die("add needs an installed app's desktop id")
+    name = args[0] if args[0].endswith(".desktop") else args[0] + ".desktop"
+    dirs = [Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")] + \
+           [Path(d) for d in (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":") if d]
+    source = next((d / "applications" / name for d in dirs if (d / "applications" / name).is_file()), None)
+    if not source:
+        die(f"no installed app '{args[0]}'")
+    USER.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, USER / name)
+    set_key(USER / name, "Hidden", "false")
+
+
+def cmd_remove(args):
+    if not args or not args[0].startswith("user:"):
+        die("remove needs one of your own entries (user:<file>)")
+    name = args[0][5:]
+    if "/" in name or not name.endswith(".desktop") or name in system_files():
+        die(f"no such entry {args[0]}")
+    (USER / name).unlink(missing_ok=True)
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    cmd, rest = args[0], args[1:]
+    if cmd == "list":
+        print(json.dumps(entries(), ensure_ascii=False))
+    elif cmd == "set":
+        cmd_set(rest)
+    elif cmd == "add":
+        cmd_add(rest)
+    elif cmd == "remove":
+        cmd_remove(rest)
+    else:
+        die(f"unknown command {cmd}")
+
+
+if __name__ == "__main__":
+    main()
