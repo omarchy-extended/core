@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Which app opens what: the default apps, by kind of thing and by file type.
+
+Usage:
+  omext-defaults list                JSON: each kind (web browser, mail, files,
+                                     text, pictures, video, music, PDF, ...) with
+                                     the app that opens it now and the apps that can
+  omext-defaults type <.ext|mime>    JSON: the same for one file type (.pdf, pdf,
+                                     or application/pdf)
+  omext-defaults set <kind|.ext|mime> <desktop-id>
+                                     have that app open it (a kind: its main type,
+                                     and every other type of the kind the app
+                                     says it opens)
+
+The defaults are kept where every app looks for them, in
+~/.config/mimeapps.list. The web browser is set the way Omarchy sets it
+(xdg-settings), so Omarchy's own browser key follows; the terminal is the one
+xdg-terminal-exec uses (~/.config/xdg-terminals.list).
+"""
+import configparser
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+DATA = [Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")] + \
+       [Path(d) for d in (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":") if d]
+DESKTOPS = [d.lower() for d in os.environ.get("XDG_CURRENT_DESKTOP", "Hyprland").split(":") if d]
+MIME = DATA + [d for d in (Path("/usr/share"),) if d not in DATA]   # where the file types are described
+MINE = CONFIG / "mimeapps.list"
+TERMINALS = CONFIG / "xdg-terminals.list"
+
+# A kind: its name, and its types (the first is the one asked about).
+KINDS = [
+    ("browser", "Web browser", ["x-scheme-handler/https", "x-scheme-handler/http", "text/html"]),
+    ("mail", "Mail", ["x-scheme-handler/mailto"]),
+    ("files", "Files", ["inode/directory"]),
+    ("terminal", "Terminal", []),
+    ("text", "Text", ["text/plain"]),
+    ("pdf", "PDF", ["application/pdf"]),
+    ("pictures", "Pictures", ["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff", "image/avif",
+                              "image/heif", "image/svg+xml"]),
+    ("video", "Video", ["video/mp4", "video/x-matroska", "video/webm", "video/quicktime", "video/x-msvideo", "video/mpeg",
+                        "video/ogg", "video/x-flv", "video/3gpp"]),
+    ("music", "Music", ["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-wav", "audio/wav", "audio/mp4", "audio/aac",
+                        "audio/x-vorbis+ogg", "audio/opus", "audio/x-opus+ogg"]),
+    ("documents", "Documents", ["application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                "application/vnd.oasis.opendocument.text", "application/msword", "application/rtf"]),
+    ("sheets", "Spreadsheets", ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.ms-excel", "text/csv"]),
+    ("archives", "Archives", ["application/zip", "application/x-tar", "application/gzip", "application/x-7z-compressed",
+                              "application/x-compressed-tar", "application/vnd.rar", "application/x-xz"]),
+]
+
+
+def die(msg):
+    print(f"omext-defaults: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def entry(path):
+    """The [Desktop Entry] keys of a desktop file."""
+    out, inside = {}, False
+    try:
+        for line in path.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                inside = line == "[Desktop Entry]"
+            elif inside and "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                out.setdefault(k.strip(), v.strip())
+    except OSError:
+        pass
+    return out
+
+
+_apps = None
+
+
+def apps():
+    """Every installed app: id -> {name, icon, types, terminal}; the first
+    folder that has a file of that name wins, as for the desktop."""
+    global _apps
+    if _apps is None:
+        _apps = {}
+        for d in DATA:
+            folder = d / "applications"
+            for f in sorted(folder.rglob("*.desktop")) if folder.is_dir() else []:
+                name = str(f.relative_to(folder)).replace("/", "-")
+                if name in _apps:
+                    continue
+                e = entry(f)
+                if e.get("Type", "Application") != "Application" or e.get("Hidden", "").lower() == "true":
+                    _apps[name] = None
+                    continue
+                _apps[name] = {"name": e.get("Name", name[:-8]), "icon": e.get("Icon", ""),
+                               "types": [t for t in e.get("MimeType", "").split(";") if t],
+                               "terminal": "TerminalEmulator" in e.get("Categories", "").split(";"),
+                               "shown": e.get("NoDisplay", "").lower() != "true"}
+        _apps = {k: v for k, v in _apps.items() if v}
+    return _apps
+
+
+def lists():
+    """The mimeapps.list files, the first that says wins: this desktop's own,
+    then yours, then the system's."""
+    out = []
+    for base in [CONFIG] + [Path(d) for d in (os.environ.get("XDG_CONFIG_DIRS") or "/etc/xdg").split(":") if d] + \
+                [d / "applications" for d in DATA]:
+        out += [base / f"{d}-mimeapps.list" for d in DESKTOPS] + [base / "mimeapps.list"]
+    return out
+
+
+def section(path, name):
+    out, inside = {}, False
+    try:
+        for line in path.read_text(errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("["):
+                inside = line == f"[{name}]"
+            elif inside and "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                out[k.strip()] = [x for x in v.strip().split(";") if x]
+    except OSError:
+        pass
+    return out
+
+
+def can_open(mime):
+    """The apps that say they open the type, and the ones you added to it."""
+    out = [a for a, e in apps().items() if mime in e["types"]]
+    for path in lists():
+        out += [a for a in section(path, "Added Associations").get(mime, []) if a in apps() and a not in out]
+    return out
+
+
+def default_of(mime):
+    for path in lists():
+        for a in section(path, "Default Applications").get(mime, []):
+            # Omarchy's own go-between for links (it hands them to the default
+            # browser): the browser itself is the next that says.
+            if a in apps() and a != "omarchy-browser.desktop":
+                return a
+    able = can_open(mime)
+    return able[0] if able else ""
+
+
+def cards(able, now):
+    """The apps to choose from, A to Z: one of each name (an app with two
+    entries is one app: the one that is the default, else the first), and
+    none that hides from the menus unless it is the default."""
+    out = {}
+    for a in able:
+        e = apps().get(a)
+        if not e or a == "omarchy-browser.desktop" or not (e["shown"] or a == now):
+            continue
+        key = e["name"].lower()
+        if key not in out or a == now:
+            out[key] = card(a)
+    return [out[k] for k in sorted(out)]
+
+
+def card(app):
+    e = apps().get(app)
+    return {"id": app, "name": e["name"], "icon": e["icon"]} if e else None
+
+
+def terminal_now():
+    try:
+        for line in TERMINALS.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#") and line in apps():
+                return line
+    except OSError:
+        pass
+    try:
+        got = subprocess.run(["xdg-terminal-exec", "--print-id"], capture_output=True, text=True, timeout=5).stdout.strip()
+        return got.split(":")[0]
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def about_kind(kind):
+    key, name, types = kind
+    if key == "terminal":
+        # (not a terminal's server and client halves: foot-server, footclient)
+        able = [a for a, e in apps().items() if e["terminal"] and e["shown"] and not re.search("server|client", a, re.I)]
+        now = terminal_now()
+    else:
+        # The apps that open the kind's main type: one that only opens an odd
+        # type of the kind (TIFF, of the pictures) is for that file type.
+        able = can_open(types[0])
+        now = default_of(types[0])
+    return {"id": key, "name": name, "current": card(now), "apps": cards(able, now)}
+
+
+def mime_of(word):
+    """A file type as you'd write it: .pdf, pdf, or the type's own name."""
+    word = word.strip().lower()
+    if "/" in word:
+        return word
+    ext = word.lstrip("*.")
+    best = None
+    for d in MIME:
+        try:
+            for line in (d / "mime" / "globs2").read_text(errors="replace").splitlines():
+                parts = line.split(":")
+                if len(parts) >= 3 and parts[2].lower() == "*." + ext and (best is None or int(parts[0]) > best[0]):
+                    best = (int(parts[0]), parts[1])
+        except (OSError, ValueError):
+            pass
+    return best[1] if best else ""
+
+
+def comment_of(mime):
+    for d in MIME:
+        try:
+            text = (d / "mime" / (mime + ".xml")).read_text(errors="replace")
+            m = re.search(r"<comment>([^<]+)</comment>", text)
+            if m:
+                return m.group(1)
+        except OSError:
+            pass
+    return mime
+
+
+def cmd_type(args):
+    mime = mime_of(args[0]) if args else ""
+    if not mime:
+        print(json.dumps(None))
+        return
+    now = default_of(mime)
+    print(json.dumps({"id": mime, "name": comment_of(mime), "type": mime, "current": card(now), "apps": cards(can_open(mime), now)},
+                     ensure_ascii=False))
+
+
+def write_defaults(pairs):
+    """Set type -> app in your mimeapps.list, the rest of the file as it is."""
+    try:
+        lines = MINE.read_text(errors="replace").splitlines()
+    except OSError:
+        lines = []
+    out, inside, left, seen = [], False, dict(pairs), False
+    for line in lines:
+        s = line.strip()
+        if s.startswith("["):
+            if inside:
+                while out and not out[-1].strip():
+                    out.pop()
+                out += [f"{t}={a}" for t, a in left.items()] + [""]
+                left = {}
+            inside = s == "[Default Applications]"
+            seen = seen or inside
+        elif inside and "=" in s and s.split("=", 1)[0].strip() in pairs:
+            t = s.split("=", 1)[0].strip()
+            if t in left:
+                out.append(f"{t}={left.pop(t)}")
+            continue
+        out.append(line)
+    if left:
+        if not seen:
+            out += ([""] if out and out[-1].strip() else []) + ["[Default Applications]"]
+        out += [f"{t}={a}" for t, a in left.items()]
+    MINE.parent.mkdir(parents=True, exist_ok=True)
+    MINE.write_text("\n".join(out).rstrip("\n") + "\n")
+
+
+def cmd_set(args):
+    if len(args) < 2:
+        die("set needs what (a kind, .ext or type) and an app's desktop id")
+    what, app = args[0], args[1] if args[1].endswith(".desktop") else args[1] + ".desktop"
+    if app not in apps():
+        die(f"no installed app '{args[1]}'")
+    kind = next((k for k in KINDS if k[0] == what), None)
+    if kind and kind[0] == "terminal":
+        if not apps()[app]["terminal"]:
+            die(f"{app} is not a terminal")
+        TERMINALS.write_text("# Terminal emulator preference order for xdg-terminal-exec\n"
+                             "# The first found and valid terminal will be used\n" + app + "\n")
+        return
+    if kind and kind[0] == "browser":
+        # As Omarchy does: only mimeapps.list is asked, where the browser itself is kept.
+        env = {k: v for k, v in os.environ.items() if k != "BROWSER"}
+        env["XDG_CURRENT_DESKTOP"] = ""
+        try:
+            if subprocess.run(["xdg-settings", "set", "default-web-browser", app], env=env, timeout=20).returncode == 0:
+                return
+        except (OSError, subprocess.SubprocessError):
+            pass
+        write_defaults({t: app for t in kind[2]})
+        return
+    if kind:
+        types = kind[2][:1] + [t for t in kind[2][1:] if app in can_open(t)]
+    else:
+        mime = mime_of(what)
+        if not mime:
+            die(f"no file type '{what}'")
+        types = [mime]
+    write_defaults({t: app for t in types})
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return
+    cmd, rest = args[0], args[1:]
+    if cmd == "list":
+        print(json.dumps([about_kind(k) for k in KINDS], ensure_ascii=False))
+    elif cmd == "type":
+        cmd_type(rest)
+    elif cmd == "set":
+        cmd_set(rest)
+    else:
+        die(f"unknown command {cmd}")
+
+
+if __name__ == "__main__":
+    main()

@@ -17,6 +17,7 @@ it.
 | `omext_settings.py` | The same settings handling for the addons' command-line tools (`omext-dock`, `omext-zone`, `omext-layout`): `settings.read("docks", {})`, `settings.write("docks", data)`. |
 | `hypr/escape.lua` | Escape closes what the omext addons have up over the windows: an open dock, the taskbar and its lists, a menu, the zone map. One Hyprland bind that takes nothing from the app in front; each addon hears it through a global shortcut of its own. |
 | `omext-startup` | What starts at login, in one list: your own entries (`~/.config/autostart`), the system's (`/etc/xdg/autostart`, turned off by a file of your own that hides it) and the [omext docks](https://github.com/omarchy-extended/docks)' apps that start with their dock. `omext-startup list`, `set <id> on\|off`, `add <app>`, `remove <id>`; [omext start](https://github.com/omarchy-extended/start)'s settings show it. What `~/.config/hypr/autostart.lua` starts is not in it. |
+| `omext-defaults` | Which app opens what: the default app per kind of thing (web browser, mail, files, terminal, text, PDF, pictures, video, music, documents, spreadsheets, archives) and per file type. `omext-defaults list`, `type <.ext\|mime>`, `set <kind\|.ext\|mime> <app>`. Kept where every app looks, in `~/.config/mimeapps.list`; the browser is set the way Omarchy sets it, the terminal is `xdg-terminal-exec`'s. [omext start](https://github.com/omarchy-extended/start)'s settings show it. |
 
 ## Every addon's settings, one way
 

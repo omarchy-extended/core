@@ -26,6 +26,8 @@ mkdir -p "$HOME/.local/bin"
 ln -sfn "$dir/bin/omext-settings" "$HOME/.local/bin/omext-settings"
 # ... and omext-startup: what starts at login, in one list (omext start's settings show it).
 ln -sfn "$dir/bin/omext-startup" "$HOME/.local/bin/omext-startup"
+# ... and omext-defaults: which app opens what (the same settings show it).
+ln -sfn "$dir/bin/omext-defaults" "$HOME/.local/bin/omext-defaults"
 
 # Hyprland: Escape closes what the omext addons have up (hypr/escape.lua),
 # loaded at every (re)load.
