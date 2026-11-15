@@ -21,7 +21,7 @@ local displaced = {}   -- address -> true: lost it while another window was in f
 
 -- (The windows maximized as this loads: no event has told of them.)
 for _, window in ipairs(hl.get_windows and hl.get_windows() or {}) do
-  if (window.fullscreen or 0) == 1 then
+  if window.address and (window.fullscreen or 0) == 1 then
     maximized[window.address] = true
   end
 end
@@ -52,7 +52,7 @@ local function is_active(window)
 end
 
 hl.on("window.active", function(window)
-  if not window then
+  if not window or not window.address then
     return
   end
   if displaced[window.address] then
@@ -68,7 +68,7 @@ hl.on("window.active", function(window)
 end)
 
 hl.on("window.fullscreen", function(window)
-  if not window then
+  if not window or not window.address then
     return
   end
   local address, mode = window.address, window.fullscreen or 0
@@ -94,9 +94,11 @@ hl.on("window.fullscreen", function(window)
 end)
 
 local function forget(window)
-  if window then
-    maximized[window.address] = nil
-    displaced[window.address] = nil
+  -- (A window that is already gone has no address left.)
+  local address = window and window.address
+  if address then
+    maximized[address] = nil
+    displaced[address] = nil
   end
 end
 hl.on("window.close", forget)
