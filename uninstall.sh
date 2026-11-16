@@ -15,6 +15,7 @@ rec=${XDG_STATE_HOME:-$HOME/.local/state}/omext/core/omarchy-dock-off
 [[ -L $HOME/.local/bin/omext-settings ]] && rm "$HOME/.local/bin/omext-settings"
 [[ -L $HOME/.local/bin/omext-startup ]] && rm "$HOME/.local/bin/omext-startup"
 [[ -L $HOME/.local/bin/omext-defaults ]] && rm "$HOME/.local/bin/omext-defaults"
+[[ -L $HOME/.local/bin/omext-profile-icons ]] && rm "$HOME/.local/bin/omext-profile-icons"
 hypr_conf=$HOME/.config/hypr/hyprland.lua
 [[ -f $hypr_conf ]] && sed -i "/^-- BEGIN omext-core\$/,/^-- END omext-core\$/d" "$hypr_conf" && { hyprctl reload >/dev/null 2>&1 || true; }
 echo "uninstall: done"

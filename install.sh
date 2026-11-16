@@ -28,6 +28,8 @@ ln -sfn "$dir/bin/omext-settings" "$HOME/.local/bin/omext-settings"
 ln -sfn "$dir/bin/omext-startup" "$HOME/.local/bin/omext-startup"
 # ... and omext-defaults: which app opens what (the same settings show it).
 ln -sfn "$dir/bin/omext-defaults" "$HOME/.local/bin/omext-defaults"
+# ... and omext-profile-icons: an icon per Edge profile, for the taskbar, switcher and workspaces.
+ln -sfn "$dir/bin/omext-profile-icons" "$HOME/.local/bin/omext-profile-icons"
 
 # Hyprland: Escape closes what the omext addons have up (hypr/escape.lua), and
 # a maximized window that gets the focus is in front (hypr/maximized.lua);

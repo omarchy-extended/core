@@ -1,0 +1,100 @@
+#!/bin/bash
+# omext-profile-icons (omext core): an icon per Microsoft Edge profile, the Edge icon
+# with the profile's picture in a ring in its corner, as Windows shows them. On
+# Wayland every Edge profile's windows share one class (microsoft-edge); the
+# profile's name ends the window title ("Page - Sinfra - Microsoft Edge"), so omext
+# core's Apps.qml picks the icon by that, from the map this writes:
+#   ~/.local/share/omext/profile-icons/map.json  {"microsoft-edge": {"<profile name>": "<png>"}}
+# A profile without a picture gets its initials. Run by omext core when it loads and
+# when a window shows a profile the map lacks; does nothing if no profile changed.
+set -euo pipefail
+
+out=${XDG_DATA_HOME:-$HOME/.local/share}/omext/profile-icons
+mkdir -p "$out"
+command -v magick >/dev/null || exit 0
+
+exec python3 -I - "$out" <<'PY'
+import hashlib, json, os, re, subprocess, sys, tempfile
+
+out = sys.argv[1]
+home = os.path.expanduser("~")
+browsers = [
+    # (class, user data dir, app icon)
+    ("microsoft-edge", f"{home}/.config/microsoft-edge", "microsoft-edge"),
+]
+
+def icon_file(name):
+    for size in ("256x256", "512x512", "128x128"):
+        for root in (f"{home}/.local/share/icons/hicolor", "/usr/share/icons/hicolor"):
+            p = f"{root}/{size}/apps/{name}.png"
+            if os.path.exists(p):
+                return p
+    return None
+
+def slug(text):
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "profile"
+
+def bold_font():
+    try:
+        return subprocess.run(["fc-match", "-f", "%{file}", "sans:bold"], capture_output=True, text=True).stdout or None
+    except OSError:
+        return None
+
+COLORS = ["#2563eb", "#16a34a", "#d97706", "#db2777", "#7c3aed", "#0891b2", "#dc2626"]
+
+def badge(base, picture, name, dest):
+    # 256px app icon, badge 128px with a white ring in the bottom-right corner.
+    with tempfile.TemporaryDirectory() as tmp:
+        disc = f"{tmp}/disc.png"
+        if picture:
+            subprocess.run(["magick", picture, "-alpha", "set", "-resize", "112x112^", "-gravity", "center",
+                            "-extent", "112x112",
+                            "(", "-size", "112x112", "xc:none", "-fill", "white",
+                            "-draw", "circle 56,56 56,0", ")",
+                            "-compose", "DstIn", "-composite", disc], check=True)
+        else:
+            initials = "".join(w[0] for w in re.findall(r"[^\W\d_]+", name)[:2]).upper() or "?"
+            color = COLORS[int(hashlib.md5(name.encode()).hexdigest(), 16) % len(COLORS)]
+            font = bold_font()
+            subprocess.run(["magick", "-size", "112x112", "xc:none", "-fill", color,
+                            "-draw", "circle 56,56 56,0", "-fill", "white",
+                            *(["-font", font] if font else []), "-pointsize", "48",
+                            "-gravity", "center", "-annotate", "+0+2", initials, disc], check=True)
+        subprocess.run(["magick", base, "-resize", "256x256",
+                        "(", "-size", "128x128", "xc:none", "-fill", "white",
+                        "-draw", "circle 64,64 64,0", disc, "-gravity", "center",
+                        "-composite", ")",
+                        "-gravity", "southeast", "-geometry", "+0+0", "-composite",
+                        dest + ".tmp.png"], check=True)
+        os.replace(dest + ".tmp.png", dest)
+
+result = {}
+for cls, data, app_icon in browsers:
+    try:
+        info = json.load(open(f"{data}/Local State"))["profile"]["info_cache"]
+    except (OSError, ValueError, KeyError):
+        continue
+    base = icon_file(app_icon)
+    if not base:
+        continue
+    profiles = {}
+    for directory, p in info.items():
+        name = p.get("name") or directory
+        pic = os.path.join(data, directory, p.get("gaia_picture_file_name") or "Edge Profile Picture.png")
+        picture = pic if os.path.exists(pic) else None
+        dest = f"{out}/{slug(cls)}-{slug(name)}.png"
+        stamp = json.dumps([name, picture, picture and os.path.getmtime(picture), base, os.path.getmtime(base)])
+        stamp_file = dest + ".stamp"
+        if not (os.path.exists(dest) and os.path.exists(stamp_file) and open(stamp_file).read() == stamp):
+            badge(base, picture, name, dest)
+            open(stamp_file, "w").write(stamp)
+        profiles[name] = dest
+    result[cls] = profiles
+
+text = json.dumps(result, indent=2, ensure_ascii=False)
+map_file = f"{out}/map.json"
+if not os.path.exists(map_file) or open(map_file).read() != text:
+    with open(map_file + ".tmp", "w") as f:
+        f.write(text)
+    os.replace(map_file + ".tmp", map_file)
+PY
