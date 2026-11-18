@@ -34,9 +34,19 @@ local function behind(window)
   if not id or id < 1 then
     return
   end
+  -- (Not its own dialogs: those stay in front of it, hypr/dialogs.lua.)
+  local mine = "omext-dialog-of-" .. window.address
+  local function dialog(other)
+    for _, tag in ipairs(other.tags or {}) do
+      if tag == mine then
+        return true
+      end
+    end
+    return false
+  end
   local others = {}
   for _, other in ipairs(hl.get_workspace_windows(tostring(id))) do
-    if other.address ~= window.address and other.floating and not other.pinned then
+    if other.address ~= window.address and other.floating and not other.pinned and not dialog(other) then
       others[#others + 1] = other
     end
   end

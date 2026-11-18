@@ -33,6 +33,7 @@ ln -sfn "$dir/bin/omext-profile-icons" "$HOME/.local/bin/omext-profile-icons"
 
 # Hyprland: Escape closes what the omext addons have up (hypr/escape.lua), and
 # a maximized window that gets the focus is in front (hypr/maximized.lua);
+# a dialog stays with its window (hypr/dialogs.lua);
 # loaded at every (re)load.
 hypr_conf=$HOME/.config/hypr/hyprland.lua
 if [[ -f $hypr_conf ]]; then
@@ -41,6 +42,7 @@ if [[ -f $hypr_conf ]]; then
     echo "-- BEGIN omext-core"
     echo "pcall(dofile, \"$dir/hypr/escape.lua\")"
     echo "pcall(dofile, \"$dir/hypr/maximized.lua\")"
+    echo "pcall(dofile, \"$dir/hypr/dialogs.lua\")"
     echo "-- END omext-core"
   } >> "$hypr_conf"
   hyprctl reload >/dev/null 2>&1 || true
