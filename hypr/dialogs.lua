@@ -77,39 +77,10 @@ local function owner(window)
   return found
 end
 
-local function xy(v)
-  return v and (v.x or v[1]), v and (v.y or v[2])
-end
-
--- A dialog of an app in a dock, within the app's own window: the dock draws
--- its frame (the apps' headers, its inner edge) over every window, and a
--- dialog lying across those would have them drawn over it. In the middle of
--- the app's window, and no larger than it.
-local function inside(dialog, window)
-  local x, y = xy(window.at)
-  local w, h = xy(window.size)
-  local dx, dy = xy(dialog.at)
-  local dw, dh = xy(dialog.size)
-  if not (x and y and w and h and dx and dy and dw and dh) then
-    return
-  end
-  local gap = 8
-  local nw, nh = math.min(dw, w - 2 * gap), math.min(dh, h - 2 * gap)
-  if nw < 200 or nh < 120 then
-    return
-  end
-  if nw ~= dw or nh ~= dh then
-    hl.dispatch(hl.dsp.window.resize({ x = nw, y = nh, relative = false, window = dialog }))
-  end
-  local nx, ny = math.floor(x + (w - nw) / 2), math.floor(y + (h - nh) / 2)
-  if dx < x + gap or dy < y + gap or dx + nw > x + w - gap or dy + nh > y + h - gap then
-    hl.dispatch(hl.dsp.window.move({ x = nx, y = ny, relative = false, window = dialog }))
-  end
-end
-
 -- A dialog where its window is: on its workspace, on every workspace if the
 -- window is (pinned: an app in an open omext dock, whose dialog would lie
--- under it otherwise), and in front of it.
+-- under it otherwise; the dock leaves the dialog's place out of its frame),
+-- and in front of it.
 local function follow(dialog, window)
   local to = workspace_of(window)
   if not to then
@@ -126,9 +97,6 @@ local function follow(dialog, window)
   end
   if window.pinned and not pinned then
     hl.dispatch(hl.dsp.window.pin({ action = "on", window = dialog }))
-  end
-  if window.pinned then
-    inside(dialog, window)
   end
   hl.dispatch(hl.dsp.window.alter_zorder({ mode = "top", window = dialog }))
 end
