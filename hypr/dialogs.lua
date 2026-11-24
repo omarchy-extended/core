@@ -61,7 +61,9 @@ local function owner(window)
   end
   for _, address in ipairs({ active, before }) do
     local front = address and address ~= window.address and hl.get_window("address:" .. address)
-    if front and front.workspace and front.workspace.id == id and (portal(window) or front.pid == window.pid) then
+    -- (On this workspace, or on every one: an app in an open omext dock.)
+    if front and front.workspace and (front.workspace.id == id or front.pinned)
+        and (portal(window) or front.pid == window.pid) then
       return front
     end
   end
@@ -75,6 +77,29 @@ local function owner(window)
   return found
 end
 
+-- A dialog where its window is: on its workspace, on every workspace if the
+-- window is (pinned: an app in an open omext dock, whose dialog would lie
+-- under it otherwise), and in front of it.
+local function follow(dialog, window)
+  local to = workspace_of(window)
+  if not to then
+    return
+  end
+  local moves = workspace_of(dialog) ~= to
+  local pinned = dialog.pinned
+  if pinned and (moves or not window.pinned) then
+    hl.dispatch(hl.dsp.window.pin({ action = "off", window = dialog }))
+    pinned = false
+  end
+  if moves then
+    hl.dispatch(hl.dsp.window.move({ workspace = to, follow = false, window = dialog }))
+  end
+  if window.pinned and not pinned then
+    hl.dispatch(hl.dsp.window.pin({ action = "on", window = dialog }))
+  end
+  hl.dispatch(hl.dsp.window.alter_zorder({ mode = "top", window = dialog }))
+end
+
 hl.on("window.open", function(window)
   local address = window and window.address
   if not address then
@@ -86,6 +111,9 @@ hl.on("window.open", function(window)
     local of = now and owner(now)
     if of then
       hl.dispatch(hl.dsp.window.tag({ tag = "+" .. TAG .. of.address, window = now }))
+      if of.pinned then
+        follow(now, of)
+      end
     end
   end, { type = "oneshot", timeout = 80 })
 end)
@@ -105,17 +133,13 @@ hl.on("window.active", function(window)
   -- giving it the focus, and the dialogs go over that.)
   hl.timer(function()
     local now = hl.get_window("address:" .. address)
-    local here = now and workspace_of(now)
     local id = now and now.workspace and now.workspace.id
-    if not here or not id or id < 1 or active ~= address then
+    if not id or id < 1 or active ~= address then
       return
     end
     local last
     for _, dialog in ipairs(dialogs_of(now)) do
-      if workspace_of(dialog) ~= here then
-        hl.dispatch(hl.dsp.window.move({ workspace = here, follow = false, window = dialog }))
-      end
-      hl.dispatch(hl.dsp.window.alter_zorder({ mode = "top", window = dialog }))
+      follow(dialog, now)
       if portal(dialog) then
         last = dialog
       end
@@ -127,17 +151,19 @@ hl.on("window.active", function(window)
   end, { type = "oneshot", timeout = 60 })
 end)
 
-hl.on("window.move_to_workspace", function(window, workspace)
-  if not window or not window.address or not workspace then
+hl.on("window.move_to_workspace", function(window)
+  local address = window and window.address
+  if not address or #dialogs_of(window) == 0 then
     return
   end
-  local to = workspace.id and workspace.id >= 1 and tostring(workspace.id) or workspace.name
-  if not to then
-    return
-  end
-  for _, dialog in ipairs(dialogs_of(window)) do
-    if workspace_of(dialog) ~= to then
-      hl.dispatch(hl.dsp.window.move({ workspace = to, follow = false, window = dialog }))
+  -- (A moment later: the move has landed, and a dock pins its window right after it.)
+  hl.timer(function()
+    local now = hl.get_window("address:" .. address)
+    if not now then
+      return
     end
-  end
+    for _, dialog in ipairs(dialogs_of(now)) do
+      follow(dialog, now)
+    end
+  end, { type = "oneshot", timeout = 80 })
 end)
