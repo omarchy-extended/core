@@ -58,6 +58,7 @@ their own idea of them:
 | `omarchyDockOff` | Omarchy's dock off while Start is on (its keys open Start's apps). Set in Start's Settings, or Setup › Omarchy Extended. |
 | `startOnTaskbar` | Start's button is on omext taskbar, not on the bar. |
 | `hideBell` | omext bell's button is off the bar while Start shows the notifications. |
+| `barPosition` | `"top"`, `"bottom"`, `"left"` or `"right"`: Omarchy's bar stays at that edge. Dragging an empty part of the bar takes it to another edge, easily done by accident, and Omarchy has no lock for it; with this set, the core puts it back at once. Leave it out to move the bar freely. |
 
 **Omarchy's dock is turned off and on in one place: here.** It's off while
 omext taskbar is on (the taskbar is in its place) or Start is on with
